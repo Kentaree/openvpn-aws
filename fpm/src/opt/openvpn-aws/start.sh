@@ -61,7 +61,7 @@ get_conf() {
 }
 
 update_current_connection() {
-  echo ${VPNCONF%%.ovpn} > ${RUN_DIR}/current_connection.txt
+  echo ${VPN_NAME} > ${RUN_DIR}/current_connection-${VPN_NAME}.txt
 }
 
 connect() {
@@ -167,4 +167,5 @@ while [ 1 ]; do
   pkill -F ${RUN_DIR}/server.pid
 done
 cleanup
+
 
