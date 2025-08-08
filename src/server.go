@@ -1,11 +1,14 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 )
 
 func main() {
@@ -34,3 +37,4 @@ func SAMLServer(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "Error: POST method expected, %s recieved", r.Method)
 	}
 }
+
