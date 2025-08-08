@@ -2,34 +2,62 @@
 AWSVPNCLIENT_CONF_DIR=~/.config/AWSVPNClient/OpenVpnConfigs
 RUN_DIR=/var/run/user/${UID}/openvpn-aws
 
+# Parse command line arguments
+CONNECTION_NAME=""
+if [ "$1" != "" ]; then
+  CONNECTION_NAME="$1"
+fi
+
 # FUNCTIONS
 get_conf() {
-  CURRENT_CONNECTION=$(cat ${RUN_DIR}/current_connection.txt)
+  # If connection name provided via command line, use it directly
+  if [ "$CONNECTION_NAME" != "" ]; then
+    VPNCONF="${CONNECTION_NAME}.ovpn"
+    if [[ ! -f "${AWSVPNCLIENT_CONF_DIR}/$VPNCONF" ]]; then
+      echo "Error: Configuration file ${AWSVPNCLIENT_CONF_DIR}/$VPNCONF not found"
+      return 1
+    fi
+  else
+    # Show dialog to choose connection
+    VPNCONF=$(find ${AWSVPNCLIENT_CONF_DIR} -type f -name "*.ovpn" -exec basename {} \; | sort | yad --separator='' --mouse --width=330 --height=250 --skip-taskbar --image=network-vpn --title "AWS Client VPN" --text "Choose a connection" --list --on-top --undecorated --mouse --list --column "select" --no-headers)
+    [[ ! -f "${AWSVPNCLIENT_CONF_DIR}/$VPNCONF" ]] && return 1
+  fi
+
+  # Extract connection name from config file
+  VPN_NAME=${VPNCONF%%.*}
   
-  VPNCONF=$(find ${AWSVPNCLIENT_CONF_DIR} -type f -name "*.ovpn" -exec basename {} \; | sort | yad --separator='' --mouse --width=330 --height=250 --skip-taskbar --image=network-vpn --title "AWS Client VPN" --text "Choose a connection" --list --on-top --undecorated --mouse --list --column "select" --no-headers)
+  # Check if this connection is already active
+  if [ -f "${RUN_DIR}/openvpn-${VPN_NAME}.pid" ]; then
+    OPENVPN_PID=$(cat ${RUN_DIR}/openvpn-${VPN_NAME}.pid)
+    if ps h -p $OPENVPN_PID -o comm 2>/dev/null | grep -q openvpn; then
+      yad --error \
+        --title "Connection Already Active" \
+        --text "Connection '${VPN_NAME}' is already established" \
+        --window-icon=yast-security \
+        --skip-taskbar --button "Exit:0"
+      return 1
+    fi
+  fi
 
-  [[ ! -f "${AWSVPNCLIENT_CONF_DIR}/$VPNCONF" ]] && return 1
-
-  # Copy and edit VPN configuration file
-  cp ${AWSVPNCLIENT_CONF_DIR}/$VPNCONF ${RUN_DIR}/vpn.conf
-  sed -i '/^auth-user-pass.*$/d' ${RUN_DIR}/vpn.conf
-  sed -i '/^auth-federate.*$/d' ${RUN_DIR}/vpn.conf
-  sed -i '/^auth-retry.*$/d' ${RUN_DIR}/vpn.conf
-  echo "" >> ${RUN_DIR}/vpn.conf
-  echo "script-security 2" >> ${RUN_DIR}/vpn.conf
-  echo "up /opt/openvpn-aws/update-resolv-conf" >> ${RUN_DIR}/vpn.conf
-  echo "down /opt/openvpn-aws/update-resolv-conf" >> ${RUN_DIR}/vpn.conf
+  # Copy and edit VPN configuration file with connection-specific naming
+  cp ${AWSVPNCLIENT_CONF_DIR}/$VPNCONF ${RUN_DIR}/vpn-${VPN_NAME}.conf
+  sed -i '/^auth-user-pass.*$/d' ${RUN_DIR}/vpn-${VPN_NAME}.conf
+  sed -i '/^auth-federate.*$/d' ${RUN_DIR}/vpn-${VPN_NAME}.conf
+  sed -i '/^auth-retry.*$/d' ${RUN_DIR}/vpn-${VPN_NAME}.conf
+  echo "" >> ${RUN_DIR}/vpn-${VPN_NAME}.conf
+  echo "script-security 2" >> ${RUN_DIR}/vpn-${VPN_NAME}.conf
+  echo "up /opt/openvpn-aws/update-resolv-conf" >> ${RUN_DIR}/vpn-${VPN_NAME}.conf
+  echo "down /opt/openvpn-aws/update-resolv-conf" >> ${RUN_DIR}/vpn-${VPN_NAME}.conf
 
   # Parsing VPN endpoint and picking a single IP address to connect to
-  VPN_NAME=${VPNCONF%%.*}
-  VPN_HOST=$(awk '/^remote / {print $2}' ${RUN_DIR}/vpn.conf)
-  VPN_PORT=$(awk '/^remote / {print $3}' ${RUN_DIR}/vpn.conf)
-  VPN_PROTO=$(awk '/^proto / {print $2}' ${RUN_DIR}/vpn.conf)
+  VPN_HOST=$(awk '/^remote / {print $2}' ${RUN_DIR}/vpn-${VPN_NAME}.conf)
+  VPN_PORT=$(awk '/^remote / {print $3}' ${RUN_DIR}/vpn-${VPN_NAME}.conf)
+  VPN_PROTO=$(awk '/^proto / {print $2}' ${RUN_DIR}/vpn-${VPN_NAME}.conf)
   VPN_SRV=$(dig a +short "${RANDOM}.${VPN_HOST}"|head -n1)
   
   # Stripping remote DNS records from conf
-  sed -i '/^remote .*$/d' ${RUN_DIR}/vpn.conf
-  sed -i '/^remote-random-hostname.*$/d' ${RUN_DIR}/vpn.conf
+  sed -i '/^remote .*$/d' ${RUN_DIR}/vpn-${VPN_NAME}.conf
+  sed -i '/^remote-random-hostname.*$/d' ${RUN_DIR}/vpn-${VPN_NAME}.conf
 }
 
 update_current_connection() {
@@ -139,3 +167,4 @@ while [ 1 ]; do
   pkill -F ${RUN_DIR}/server.pid
 done
 cleanup
+
